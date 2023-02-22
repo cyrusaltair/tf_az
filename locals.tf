@@ -5,4 +5,6 @@ locals {
     department   = "techOps"
     source       = "terraform"
   }
+
+  pubkey = file("./postfixTest_key.pub")
 }

@@ -15,7 +15,7 @@ resource "azurerm_resource_group" "rg" {
   name     = "${var.prefix}-resource-group"
   location = var.location
 
-  tags = locals.tags
+  tags = local.tags
 }
 
 resource "azurerm_network_security_group" "nsg" {
@@ -23,43 +23,38 @@ resource "azurerm_network_security_group" "nsg" {
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
 
-  security_rule = {
+  tags = local.tags
+}
+
+resource "azurerm_network_security_rule" "nsr" {
+    name                   = "${var.prefix}-NSG-security-rule"
     access                 = "Allow"
     description            = "security rule for the mailer network security group"
+    destination_address_prefix = "*"
     destination_port_range = "*"
-    direction              = "outbound"
-    name                   = "${var.prefix}-NSG-security-rule"
-    priority               = 1
-    protocol               = "Tcp"
+    source_address_prefix = "*"
     source_port_range      = "*"
-
-    resource_group_name         = azurerm_resource_group.rg.name
-    network_security_group_name = azurerm_network_security_group.nsg.name
-
-    tags = locals.tags
+    direction              = "Outbound"
+    priority               = 100
+    protocol               = "Tcp"
+  resource_group_name         = azurerm_resource_group.rg.name
+  network_security_group_name = azurerm_network_security_group.nsg.name
   }
-
-  tags = locals.tags
-}
 
 resource "azurerm_virtual_network" "vn" {
   name                        = "${var.prefix}-virtual-network"
   resource_group_name         = azurerm_resource_group.rg.name
-  network_security_group_name = azurerm_network_security_group.nsg.name
   location                    = azurerm_resource_group.rg.location
   address_space               = var.address_space
 
-  tags = locals.tags
+  tags = local.tags
 }
 
-resource "azurerm_subnet" "subnet1" {
+resource "azurerm_subnet" "subnet" {
   name                        = "${var.prefix}-subnet1"
   resource_group_name         = azurerm_resource_group.rg.name
-  network_security_group_name = azurerm_network_security_group.nsg.name
   virtual_network_name        = azurerm_virtual_network.vn.name
-  address_prefixes            = var.address_prefixes
-
-  tags = locals.tags
+  address_prefixes            = var.subnet_prefix
 }
 
 resource "azurerm_network_interface" "ni" {
@@ -70,19 +65,94 @@ resource "azurerm_network_interface" "ni" {
     ip_configuration {
       name = "${var.prefix}-ni-ip-config"
       subnet_id = azurerm_subnet.subnet.id
-      private_ip_address_allocation = "dynamic"
-      tags = locals.tags
+      private_ip_address_allocation = "Dynamic"
     }
 
-    tags = locals.tags
+    tags = local.tags
 }
 
-resource "azurerm_virtual_machine" "vm1" 
-    name = "${var.prefix}-virtual-machine1"
+resource "azurerm_linux_virtual_machine_scale_set" "asg" {
+  name = "${var.prefix}-linux-scaling-set"
+  resource_group_name = azurerm_resource_group.rg.name
+  location = azurerm_resource_group.rg.location
+  sku = var.vm_size
+  instances = 3
+  admin_username = var.adminuser
 
+  admin_ssh_key {
+    username = var.adminuser
+    public_key = local.pubkey
+  }
 
+  os_disk {
+    caching = "ReadWrite"
+    storage_account_type = "Standard_LRS"
+  }
 
+    source_image_reference {
+  publisher = "Canonical"
+  offer     = "UbuntuServer"
+  sku       = "16.04-LTS"
+  version   = "latest"
+  }
 
-    tags = locals.tags
+  network_interface {
+    name = "${var.prefix}-linux-scaling-set-ni"
+    primary = true
+    
+    ip_configuration {
+      name = "${var.prefix}-linux-scaling-set-ni-ipconfig"
+      primary = true
+      subnet_id = azurerm_subnet.subnet.id
+    }
+  }
+  tags = local.tags
 }
-# VM, autoscaler, load balancer, internet gateway, 
+
+resource "azurerm_public_ip" "lb_ip" {
+  name = "${var.prefix}-load-balancer-publicIP"
+  location = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+  allocation_method = "Static"
+}
+
+resource "azurerm_lb" "lb" {
+  name = "${var.prefix}-load-balancer"
+  location = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+  sku = "Basic"
+
+  frontend_ip_configuration {
+    name = "lb_PublicIPAddress"
+    public_ip_address_id = azurerm_public_ip.lb_ip.id
+  }
+}
+ 
+resource "azurerm_linux_virtual_machine" "dns_vm" {
+    name = "${var.prefix}-dns-vm-1"
+    resource_group_name = azurerm_resource_group.rg.name
+    location = azurerm_resource_group.rg.location
+    size = var.vm_size
+    admin_username = var.adminuser
+    network_interface_ids = [azurerm_network_interface.ni.id]
+
+    admin_ssh_key {
+      username = var.adminuser
+      public_key = local.pubkey
+    }
+
+    os_disk {
+      caching = "ReadWrite"
+      storage_account_type = "Standard_LRS"
+    }
+
+      source_image_reference {
+    publisher = "Canonical"
+    offer     = "UbuntuServer"
+    sku       = "16.04-LTS"
+    version   = "latest"
+  }
+    
+    tags = local.tags
+}
+
